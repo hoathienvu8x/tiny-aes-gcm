@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "aes_gcm.h"
 
@@ -19,7 +20,16 @@ static int aes_gcm_process(
   (void)encrypt;
   return -1;  
 }
-
+static int generate_random_bytes(uint8_t *buffer, size_t len) {
+  size_t read_len;
+  FILE *fp = fopen("/dev/urandom", "rb");
+  if (!fp) return -1;
+  
+  read_len = fread(buffer, 1, len, fp);
+  fclose(fp);
+  
+  return (read_len == len) ? 0 : -1;
+}
 void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
   /* TODO: AES GCM Init*/
   (void)ctx;
@@ -27,15 +37,11 @@ void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
   (void)key_bits;
 }
 int aes_gcm_generate_iv(uint8_t *iv) {
-  /* TODO: Random iv */
-  (void)iv;
-  return -1;
+  return generate_random_bytes(iv, GCM_IV_SIZE);
 }
 int aes_gcm_generate_key(uint8_t *key, int key_bits) {
-  /* TODO: Random key */
-  (void)key;
-  (void)key_bits;
-  return -1;
+  if (key_bits != 128 && key_bits != 192 && key_bits != 256) return -1;
+  return generate_random_bytes(key, key_bits / 8);
 }
 int aes_gcm_encrypt(
   aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
