@@ -97,22 +97,123 @@ static void aes_encrypt_block(
   }
   memcpy(out, s, AES_BLOCK_SIZE);
 }
+static void gfm_multiply(uint8_t *x, const uint8_t *y) {
+  uint8_t res[AES_BLOCK_SIZE] = {0};
+  uint8_t v[AES_BLOCK_SIZE];
+  int i, j, carry;
+  memcpy(v, y, AES_BLOCK_SIZE);
+  for (i = 0; i < 128; i++) {
+    if ((x[i / 8] >> (7 - (i % 8))) & 1) {
+      for (j = 0; j < AES_BLOCK_SIZE; j++) {
+        res[j] ^= v[j];
+      }
+    }
+    carry = v[15] & 1;
+    for (j = 15; j > 0; j--) {
+      v[j] = (v[j] >> 1) | (v[j - 1] << 7);
+    }
+    v[0] >>= 1;
+    if (carry) {
+      v[0] ^= 0xe1;
+    }
+  }
+  memcpy(x, res, AES_BLOCK_SIZE);
+}
+
+static void ghash_update(
+  uint8_t y[AES_BLOCK_SIZE], const uint8_t h[AES_BLOCK_SIZE],
+  const uint8_t *block, size_t len
+) {
+  int i;
+  uint8_t tmp[AES_BLOCK_SIZE] = {0};
+  memcpy(tmp, block, len);
+  for (i = 0; i < AES_BLOCK_SIZE; i++) {
+    y[i] ^= tmp[i];
+  }
+  gfm_multiply(y, h);
+}
+static void compute_j0(
+  const uint8_t *h, const uint8_t *iv,
+  size_t iv_len, uint8_t j0[AES_BLOCK_SIZE]
+) {
+  size_t i;
+  if (iv_len == 12) {
+    memcpy(j0, iv, 12);
+    j0[12] = 0; j0[13] = 0; j0[14] = 0; j0[15] = 1;
+  } else {
+    uint64_t iv_bits = 0;
+    uint8_t y[AES_BLOCK_SIZE] = {0};
+    uint8_t lb[AES_BLOCK_SIZE] = {0};
+    for (i = 0; i < iv_len; i += AES_BLOCK_SIZE) {
+      ghash_update(
+        y, h, iv + i,
+        (iv_len - i) < AES_BLOCK_SIZE ? (iv_len - i) : AES_BLOCK_SIZE);
+    }
+    iv_bits = (uint64_t)iv_len * 8;
+    for (i = 0; i < 8; i++) {
+      lb[15-i] = (uint8_t)(iv_bits >> (i * 8));
+    }
+    ghash_update(y, h, lb, AES_BLOCK_SIZE);
+    memcpy(j0, y, AES_BLOCK_SIZE);
+  }
+}
 static int aes_gcm_process(
   aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
   const uint8_t *aad, size_t aad_len, const uint8_t *input, size_t length,
   uint8_t *output, uint8_t *tag, int encrypt
 ) {
-  (void)ctx;
-  (void)iv;
-  (void)iv_len;
-  (void)aad;
-  (void)aad_len;
-  (void)input;
-  (void)length;
-  (void)output;
-  (void)tag;
-  (void)encrypt;
-  return -1;  
+  uint8_t j0[AES_BLOCK_SIZE], ctr[AES_BLOCK_SIZE], mask[AES_BLOCK_SIZE];
+  uint8_t y[AES_BLOCK_SIZE] = {0}, lb[AES_BLOCK_SIZE] = {0};
+  size_t i, j, chunk;
+  uint64_t al_bits, cl_bits;
+
+  if (!ctx || !iv || (length > 0 && (!input || !output)) || !tag) {
+    return -1;
+  }
+  compute_j0(ctx->H, iv, iv_len, j0);
+  for (i = 0; i < aad_len; i += AES_BLOCK_SIZE) {
+    ghash_update(
+      y, ctx->H, aad + i,
+      (aad_len - i) < AES_BLOCK_SIZE ? (aad_len - i) : AES_BLOCK_SIZE
+    );
+  }
+
+  memcpy(ctr, j0, AES_BLOCK_SIZE);
+  for (i = 0; i < length; i += AES_BLOCK_SIZE) {
+    for (j = 15; j >= 12; j--) {
+      if (++ctr[j]) break;
+    }
+    
+    aes_encrypt_block(ctr, ctx->round_keys, ctx->rounds, mask);
+    chunk = (length - i) < AES_BLOCK_SIZE ? (length - i) : AES_BLOCK_SIZE;
+    
+    if (encrypt) {
+      for (j = 0; j < chunk; j++) {
+        output[i+j] = input[i+j] ^ mask[j];
+      }
+      ghash_update(y, ctx->H, output + i, chunk);
+    } else {
+      ghash_update(y, ctx->H, input + i, chunk);
+      for (j = 0; j < chunk; j++) {
+        output[i+j] = input[i+j] ^ mask[j];
+      }
+    }
+  }
+
+  al_bits = (uint64_t)aad_len * 8;
+  cl_bits = (uint64_t)length * 8;
+  for (i = 0; i < 8; i++) {
+    lb[7 - i] = (uint8_t)(al_bits >> (i * 8));
+    lb[15 - i] = (uint8_t)(cl_bits >> (i * 8));
+  }
+  ghash_update(y, ctx->H, lb, AES_BLOCK_SIZE);
+
+  aes_encrypt_block(j0, ctx->round_keys, ctx->rounds, mask);
+  for (i = 0; i < GCM_TAG_SIZE; i++) {
+    tag[i] = y[i] ^ mask[i];
+  }
+
+  return 0; 
 }
 /*********************** PUBLIC APIS ***********************************/
 void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
