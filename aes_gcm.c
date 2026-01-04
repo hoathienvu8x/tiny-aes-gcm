@@ -260,11 +260,25 @@ int aes_gcm_decrypt(
   const uint8_t *input, size_t length,
   const uint8_t *tag, uint8_t *output
 ) {
+  int i, diff = 0;
   uint8_t computed_tag[GCM_TAG_SIZE];
-  (void)tag;
-  return aes_gcm_process(
-    ctx, iv, iv_len, aad, aad_len, input, length, output, computed_tag, 0
-  );
+  if (aes_gcm_process(
+    ctx, iv, iv_len, aad, aad_len, input,
+    length, output, computed_tag, 0
+  ) != 0) {
+    return -1;
+  }
+
+  for (i = 0; i < GCM_TAG_SIZE; i++) {
+    diff |= (computed_tag[i] ^ tag[i]);
+  }
+
+  if (diff != 0) {
+    memset(output, 0, length);
+    return -1;
+  }
+
+  return 0;
 }
 int aes_gcm_string_encrypt(
   aes_gcm_context *ctx, const uint8_t *iv,
