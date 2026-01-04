@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,17 +30,6 @@ static const uint8_t sbox[256] = {
 static const uint32_t rcon[] = {
   0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36
 };
-
-static int generate_random_bytes(uint8_t *buffer, size_t len) {
-  size_t read_len;
-  FILE *fp = fopen("/dev/urandom", "rb");
-  if (!fp) return -1;
-  
-  read_len = fread(buffer, 1, len, fp);
-  fclose(fp);
-  
-  return (read_len == len) ? 0 : -1;
-}
 static uint32_t rot_word(uint32_t w) {
   return (w << 8) | (w >> 24);
 }

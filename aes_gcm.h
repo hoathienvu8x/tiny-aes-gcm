@@ -17,6 +17,7 @@ typedef struct {
 } aes_gcm_context;
 
 void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits);
+extern int generate_random_bytes(uint8_t *buffer, size_t len);
 int aes_gcm_generate_iv(uint8_t *iv);
 int aes_gcm_generate_key(uint8_t *key, int key_bits);
 int aes_gcm_encrypt(

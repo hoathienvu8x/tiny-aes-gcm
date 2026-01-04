@@ -5,6 +5,17 @@
 
 #include "aes_gcm.h"
 
+int generate_random_bytes(uint8_t *buffer, size_t len) {
+  size_t read_len;
+  FILE *fp = fopen("/dev/urandom", "rb");
+  if (!fp) return -1;
+  
+  read_len = fread(buffer, 1, len, fp);
+  fclose(fp);
+  
+  return (read_len == len) ? 0 : -1;
+}
+
 static void hex_dump(const char *label, const uint8_t *buf, size_t len) {
   size_t i;
   printf("%s (%ld bytes):\n", label, len);
