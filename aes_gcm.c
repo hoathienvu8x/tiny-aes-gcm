@@ -1,5 +1,23 @@
 #include "aes_gcm.h"
 
+static int aes_gcm_process(
+  aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
+  const uint8_t *aad, size_t aad_len, const uint8_t *input, size_t length,
+  uint8_t *output, uint8_t *tag, int encrypt
+) {
+  (void)ctx;
+  (void)iv;
+  (void)iv_len;
+  (void)aad;
+  (void)aad_len;
+  (void)input;
+  (void)length;
+  (void)output;
+  (void)tag;
+  (void)encrypt;
+  return -1;  
+}
+
 void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
   /* TODO: AES GCM Init*/
   (void)ctx;
@@ -23,17 +41,9 @@ int aes_gcm_encrypt(
   const uint8_t *input, size_t length,
   uint8_t *output, uint8_t *tag
 ) {
-  /* TODO: AES GCM encrypt fixed length */
-  (void)ctx;
-  (void)iv;
-  (void)iv_len;
-  (void)aad;
-  (void)aad_len;
-  (void)input;
-  (void)length;
-  (void)output;
-  (void)tag;
-  return -1;
+  return aes_gcm_process(
+    ctx, iv, iv_len, aad, aad_len, input, length, output, tag, 1
+  );
 }
 int aes_gcm_decrypt(
   aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
@@ -41,17 +51,11 @@ int aes_gcm_decrypt(
   const uint8_t *input, size_t length,
   const uint8_t *tag, uint8_t *output
 ) {
-  /* TODO: AES GCM decrypt fixed length */
-  (void)ctx;
-  (void)iv;
-  (void)iv_len;
-  (void)aad;
-  (void)aad_len;
-  (void)input;
-  (void)length;
+  uint8_t computed_tag[GCM_TAG_SIZE];
   (void)tag;
-  (void)output;
-  return -1;
+  return aes_gcm_process(
+    ctx, iv, iv_len, aad, aad_len, input, length, output, computed_tag, 0
+  );
 }
 int aes_gcm_string_encrypt(
   aes_gcm_context *ctx, const uint8_t *iv,
