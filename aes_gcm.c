@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "aes_gcm.h"
 
 static int aes_gcm_process(
@@ -62,14 +64,22 @@ int aes_gcm_string_encrypt(
   const char *input_str, size_t len,
   uint8_t **output_cipher, size_t *cipher_len, uint8_t *output_tag
 ) {
-  /* TODO: AES GCM encrypt string input */
-  (void)ctx;
-  (void)iv;
-  (void)input_str;
-  (void)len;
-  (void)output_cipher;
-  (void)cipher_len;
-  (void)output_tag;
+  *cipher_len = 0;
+  if (!input_str || len == 0 || !output_cipher || !output_tag) {
+    return -1;
+  }
+  *output_cipher = (uint8_t *)malloc(len);
+  if (*output_cipher == NULL) return -2;
+
+  if (aes_gcm_encrypt(
+    ctx, iv, GCM_IV_SIZE, NULL, 0, (const uint8_t*)input_str,
+    len, *output_cipher, output_tag
+  ) == 0) {
+    *cipher_len = len;
+    return 0;
+  }
+  free(*output_cipher);
+  *output_cipher = NULL;
   return -1;
 }
 int aes_gcm_string_decrypt(
@@ -77,12 +87,18 @@ int aes_gcm_string_decrypt(
   const uint8_t *input_cipher, size_t cipher_len,
   const uint8_t *input_tag, char **output_str
 ) {
-  /* TODO: AES GCM decrypt string input */
-  (void)ctx;
-  (void)iv;
-  (void)input_cipher;
-  (void)cipher_len;
-  (void)input_tag;
-  (void)output_str;
+  if (!input_cipher || !output_str || !input_tag) return -1;
+  *output_str = (char *)malloc(cipher_len + 1);
+  if (*output_str == NULL) return -2;
+  
+  if (aes_gcm_decrypt(
+    ctx, iv, GCM_IV_SIZE, NULL, 0, input_cipher, cipher_len,
+    input_tag, (uint8_t*)*output_str
+  ) == 0) {
+    (*output_str)[cipher_len] = '\0';
+    return 0;
+  }
+  free(*output_str);
+  *output_str = NULL;
   return -1;
 }
