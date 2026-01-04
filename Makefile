@@ -9,9 +9,9 @@ endif
 CFLAGS += -std=gnu89 -Wall -Wextra -Werror -pedantic
 RM = rm -rf
 
-OBJECTS = aes_gcm.o
+OBJECTS = aes_gcm.o p256-m.o sha256.o
 OBJECTS := $(addprefix objects/,$(OBJECTS))
-EXECUTABLE = aes_gcm
+EXECUTABLE = demo
 
 all: objects $(EXECUTABLE)
 
