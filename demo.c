@@ -24,11 +24,14 @@ void print_hex(const char *label, const uint8_t *data, size_t len) {
 }
 
 void usage(const char *prog_name) {
-  printf("Sử dụng:\n");
+  printf("Sử dụng CLI AES-GCM (Hỗ trợ AAD):\n");
   printf("  Tạo Key : %s gen <key_bits>\n", prog_name);
-  printf("  Mã hóa: %s enc <key_hex> <plain_text>\n", prog_name);
-  printf("  Giải mã: %s dec <key_hex> <iv_hex> <tag_hex> <cipher_hex>\n", prog_name);
-  printf("\nLưu ý:\n  key phải là 16, 24 hoặc 32 bytes (32, 48, hoặc 64 ký tự hex).\n  <key_bits> thường là 128, 192 hoặc 256.\n");
+  printf("  Mã hóa: %s enc <key_hex> <plain_text> [aad_text]\n", prog_name);
+  printf("  Giải mã: %s dec <key_hex> <iv_hex> <tag_hex> <cipher_hex> [aad_text]\n", prog_name);
+  printf(
+    "\nLưu ý:\n  key phải là 16, 24 hoặc 32 bytes (32, 48, hoặc 64 ký tự"
+    " hex).\n  <key_bits> thường là 128, 192 hoặc 256.\n"
+  );
 }
 
 int hex_to_bytes(const char *hex, uint8_t *bytes, size_t max_len) {
@@ -87,15 +90,23 @@ int main(int argc, char *argv[]) {
 
   if (strcmp(mode, "enc") == 0) {
     const char *plain_text = argv[3];
-    uint8_t iv[GCM_IV_SIZE];
-    uint8_t tag[GCM_TAG_SIZE];
+    uint8_t iv[GCM_IV_SIZE], tag[GCM_TAG_SIZE];
     uint8_t *cipher = NULL;
     size_t cipher_len = 0;
 
     aes_gcm_generate_iv(iv);
     aes_gcm_set_iv(&ctx, iv, GCM_IV_SIZE);
-    if (aes_gcm_string_encrypt(&ctx, plain_text, strlen(plain_text), &cipher, &cipher_len, tag) == 0) {
+    if (argc >= 5) {
+      aes_gcm_set_aad(&ctx, (uint8_t *)argv[4], strlen(argv[4]));
+    }
+    if (aes_gcm_string_encrypt(
+      &ctx, plain_text, strlen(plain_text),
+      &cipher, &cipher_len, tag
+    ) == 0) {
       printf("--- KẾT QUẢ MÃ HÓA ---\n");
+      if (argc >= 5) {
+        printf("AAD   : %s\n", argv[4]);
+      }
       print_hex("IV    ", iv, GCM_IV_SIZE);
       print_hex("Tag   ", tag, GCM_TAG_SIZE);
       print_hex("Cipher", cipher, cipher_len);
@@ -124,12 +135,20 @@ int main(int argc, char *argv[]) {
       return 1;
     }
     aes_gcm_set_iv(&ctx, iv, iv_len_in);
-    if (aes_gcm_string_decrypt(&ctx, cipher, cipher_len_in, tag, &output_str) == 0) {
+    if (argc >= 7) {
+      aes_gcm_set_aad(&ctx, (uint8_t *)argv[6], strlen(argv[6]));
+    }
+    if (aes_gcm_string_decrypt(
+      &ctx, cipher, cipher_len_in, tag, &output_str
+    ) == 0) {
       printf("--- KẾT QUẢ GIẢI MÃ ---\n");
       printf("Plaintext: %s\n", output_str);
       free(output_str);
     } else {
-      fprintf(stderr, "Giải mã thất bại! (Sai key, tag hoặc dữ liệu bị sửa đổi)\n");
+      fprintf(
+        stderr, "Giải mã thất bại! (Sai key, tag, AAD không khớp hoặc dữ"
+        " liệu bị sửa đổi)\n"
+      );
     }
   } else {
     usage(argv[0]);
