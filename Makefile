@@ -28,6 +28,15 @@ endif
 	@$(CC) objects/main.o $(OBJECTS) -o $@ $(LDFLAGS)
 	@$(RM) objects/main.o
 
+demo: objects/demo.o $(OBJECTS)
+ifeq ($(build),release)
+	@echo "Build release '$@' executable ..."
+else
+	@echo "Build '$@' executable ..."
+endif
+	@$(CC) objects/demo.o $(OBJECTS) -o $@ $(LDFLAGS)
+	@$(RM) objects/demo.o
+
 objects/%.o: %.c
 ifeq ($(build),release)
 	@echo "Build release '$@' object ..."
@@ -38,4 +47,4 @@ endif
 
 clean:
 	@echo "Cleanup ..."
-	@$(RM) $(OBJECTS) $(EXECUTABLE)
+	@$(RM) $(OBJECTS) $(EXECUTABLE) demo
