@@ -28,7 +28,6 @@ static void hex_dump(const char *label, const uint8_t *buf, size_t len) {
 
 void run_random_test(int key_bits, size_t aad_len, size_t pt_len) {
   int rc = -1;
-  size_t i;
   aes_gcm_context ctx;
 
   uint8_t key[32];
@@ -50,21 +49,12 @@ void run_random_test(int key_bits, size_t aad_len, size_t pt_len) {
 
   if (!pt || !ct || !out) goto done;
 
-  srand(time(NULL));
-  for (i = 0; i < 32; i++) {
-    key[i] = rand() % 256;
-  }
-  for (i = 0; i < GCM_IV_SIZE; i++) {
-    iv[i] = rand() % 256;
-  }
+ generate_random_bytes(key, 32);
+  generate_random_bytes(iv, GCM_IV_SIZE);
   if (aad_len > 0) {
-    for (i = 0; i < aad_len; i++) {
-      aad[i] = rand() % 256;
-    }
+    generate_random_bytes(aad, aad_len);
   }
-  for (i = 0; i < pt_len; i++) {
-    pt[i] = rand() % 256;
-  }
+  generate_random_bytes(pt, pt_len);
 
   hex_dump("Key", key, key_bits / 8);
   hex_dump("IV", iv, GCM_IV_SIZE);
@@ -72,18 +62,18 @@ void run_random_test(int key_bits, size_t aad_len, size_t pt_len) {
   hex_dump("Plaintext", pt, pt_len);
 
   aes_gcm_init(&ctx, key, key_bits);
-  if (aes_gcm_encrypt(
-    &ctx, iv, GCM_IV_SIZE, aad, aad_len, pt, pt_len, ct, tag
-  )) {
+  aes_gcm_set_iv(&ctx, iv, GCM_IV_SIZE);
+  if (aad_len) {
+    aes_gcm_set_aad(&ctx, aad, aad_len);
+  }
+  if (aes_gcm_encrypt(&ctx, pt, pt_len, ct, tag)) {
     goto done;
   }
 
   hex_dump("Ciphertext", ct, pt_len);
   hex_dump("Auth Tag", tag, GCM_TAG_SIZE);
 
-  rc = aes_gcm_decrypt(
-    &ctx, iv, GCM_IV_SIZE, aad, aad_len, ct, pt_len, tag, out
-  );
+  rc = aes_gcm_decrypt(&ctx, ct, pt_len, tag, out);
 
   if (rc != 0 || memcmp(pt, out, pt_len) != 0) {
     printf("RANDOM TEST RESULT: FAILED!\n");
@@ -128,9 +118,11 @@ int main(int argc, char **argv) {
   hex_dump("Iv", iv, GCM_IV_SIZE);
 
   aes_gcm_init(&ctx, key, 256);
+  aes_gcm_set_iv(&ctx, iv, GCM_IV_SIZE);
   if (aes_gcm_string_encrypt(
-    &ctx, iv, msg, strlen(msg), &cipher, &cipher_len, tag
+    &ctx, msg, strlen(msg), &cipher, &cipher_len, tag
   )) {
+    printf("Encrypt failed\n");
     return -1;
   }
 
@@ -138,7 +130,7 @@ int main(int argc, char **argv) {
   hex_dump("Auth tag", tag, GCM_TAG_SIZE);
 
   if (aes_gcm_string_decrypt(
-    &ctx, iv, cipher, cipher_len, tag, &decrypted
+    &ctx, cipher, cipher_len, tag, &decrypted
   ) == 0) {
     if (strcmp(msg, decrypted) == 0) {
       printf("Ok\n");

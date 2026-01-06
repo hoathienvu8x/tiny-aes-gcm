@@ -146,8 +146,7 @@ static void compute_j0(
   }
 }
 static int aes_gcm_process(
-  aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
-  const uint8_t *aad, size_t aad_len, const uint8_t *input, size_t length,
+  aes_gcm_context *ctx, const uint8_t *input, size_t length,
   uint8_t *output, uint8_t *tag, int encrypt
 ) {
   uint8_t j0[AES_BLOCK_SIZE], ctr[AES_BLOCK_SIZE], mask[AES_BLOCK_SIZE];
@@ -155,15 +154,19 @@ static int aes_gcm_process(
   size_t i, j, chunk;
   uint64_t al_bits, cl_bits;
 
-  if (!ctx || !iv || (length > 0 && (!input || !output)) || !tag) {
+  if (!ctx || !ctx->iv || (length > 0 && (!input || !output)) || !tag) {
     return -1;
   }
-  compute_j0(ctx->H, iv, iv_len, j0);
-  for (i = 0; i < aad_len; i += AES_BLOCK_SIZE) {
-    ghash_update(
-      y, ctx->H, aad + i,
-      (aad_len - i) < AES_BLOCK_SIZE ? (aad_len - i) : AES_BLOCK_SIZE
-    );
+
+  compute_j0(ctx->H, ctx->iv, ctx->iv_len, j0);
+
+  if (ctx->aad && ctx->aad_len > 0) {
+    for (i = 0; i < ctx->aad_len; i += AES_BLOCK_SIZE) {
+      ghash_update(
+        y, ctx->H, ctx->aad + i,
+        (ctx->aad_len - i) < AES_BLOCK_SIZE ? (ctx->aad_len - i) : AES_BLOCK_SIZE
+      );
+    }
   }
 
   memcpy(ctr, j0, AES_BLOCK_SIZE);
@@ -188,7 +191,7 @@ static int aes_gcm_process(
     }
   }
 
-  al_bits = (uint64_t)aad_len * 8;
+  al_bits = (uint64_t)ctx->aad_len * 8;
   cl_bits = (uint64_t)length * 8;
   for (i = 0; i < 8; i++) {
     lb[7 - i] = (uint8_t)(al_bits >> (i * 8));
@@ -201,12 +204,18 @@ static int aes_gcm_process(
     tag[i] = y[i] ^ mask[i];
   }
 
-  return 0; 
+  return 0;
 }
 /*********************** PUBLIC APIS ***********************************/
 void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
   int i, nk = key_bits / 32;
   uint8_t zero[AES_BLOCK_SIZE] = {0};
+  
+  ctx->iv = NULL;
+  ctx->iv_len = 0;
+  ctx->aad = NULL;
+  ctx->aad_len = 0;
+
   ctx->rounds = nk + 6;
   for (i = 0; i < nk; i++) {
     ctx->round_keys[i] = (
@@ -225,6 +234,18 @@ void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
   }
   aes_encrypt_block(zero, ctx->round_keys, ctx->rounds, ctx->H);
 }
+void aes_gcm_set_iv(aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len) {
+  if (ctx) {
+    ctx->iv = iv;
+    ctx->iv_len = iv_len;
+  }
+}
+void aes_gcm_set_aad(aes_gcm_context *ctx, const uint8_t *aad, size_t aad_len) {
+  if (ctx) {
+    ctx->aad = aad;
+    ctx->aad_len = aad_len;
+  }
+}
 int aes_gcm_generate_iv(uint8_t *iv) {
   return generate_random_bytes(iv, GCM_IV_SIZE);
 }
@@ -233,27 +254,18 @@ int aes_gcm_generate_key(uint8_t *key, int key_bits) {
   return generate_random_bytes(key, key_bits / 8);
 }
 int aes_gcm_encrypt(
-  aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
-  const uint8_t *aad, size_t aad_len,
-  const uint8_t *input, size_t length,
+  aes_gcm_context *ctx, const uint8_t *input, size_t length,
   uint8_t *output, uint8_t *tag
 ) {
-  return aes_gcm_process(
-    ctx, iv, iv_len, aad, aad_len, input, length, output, tag, 1
-  );
+  return aes_gcm_process(ctx, input, length, output, tag, 1);
 }
 int aes_gcm_decrypt(
-  aes_gcm_context *ctx, const uint8_t *iv, size_t iv_len,
-  const uint8_t *aad, size_t aad_len,
-  const uint8_t *input, size_t length,
+  aes_gcm_context *ctx, const uint8_t *input, size_t length,
   const uint8_t *tag, uint8_t *output
 ) {
   int i, diff = 0;
   uint8_t computed_tag[GCM_TAG_SIZE];
-  if (aes_gcm_process(
-    ctx, iv, iv_len, aad, aad_len, input,
-    length, output, computed_tag, 0
-  ) != 0) {
+  if (aes_gcm_process(ctx, input, length, output, computed_tag, 0) != 0) {
     return -1;
   }
 
@@ -269,8 +281,7 @@ int aes_gcm_decrypt(
   return 0;
 }
 int aes_gcm_string_encrypt(
-  aes_gcm_context *ctx, const uint8_t *iv,
-  const char *input_str, size_t len,
+  aes_gcm_context *ctx, const char *input_str, size_t len,
   uint8_t **output_cipher, size_t *cipher_len, uint8_t *output_tag
 ) {
   *cipher_len = 0;
@@ -281,8 +292,7 @@ int aes_gcm_string_encrypt(
   if (*output_cipher == NULL) return -2;
 
   if (aes_gcm_encrypt(
-    ctx, iv, GCM_IV_SIZE, NULL, 0, (const uint8_t*)input_str,
-    len, *output_cipher, output_tag
+    ctx, (const uint8_t*)input_str, len, *output_cipher, output_tag
   ) == 0) {
     *cipher_len = len;
     return 0;
@@ -292,8 +302,7 @@ int aes_gcm_string_encrypt(
   return -1;
 }
 int aes_gcm_string_decrypt(
-  aes_gcm_context *ctx, const uint8_t *iv,
-  const uint8_t *input_cipher, size_t cipher_len,
+  aes_gcm_context *ctx, const uint8_t *input_cipher, size_t cipher_len,
   const uint8_t *input_tag, char **output_str
 ) {
   if (!input_cipher || !output_str || !input_tag) return -1;
@@ -301,8 +310,7 @@ int aes_gcm_string_decrypt(
   if (*output_str == NULL) return -2;
   
   if (aes_gcm_decrypt(
-    ctx, iv, GCM_IV_SIZE, NULL, 0, input_cipher, cipher_len,
-    input_tag, (uint8_t*)*output_str
+    ctx, input_cipher, cipher_len, input_tag, (uint8_t*)*output_str
   ) == 0) {
     (*output_str)[cipher_len] = '\0';
     return 0;
