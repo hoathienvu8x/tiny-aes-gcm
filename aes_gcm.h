@@ -52,5 +52,7 @@ int aes_gcm_string_decrypt(
   const uint8_t *input_cipher, size_t cipher_len,
   const uint8_t *input_tag, char **output_str
 );
+int aes_gcm_save_to_pem(const aes_gcm_context *ctx, const char *filename);
+int aes_gcm_load_from_pem(aes_gcm_context *ctx, const char *filename);
 
 #endif

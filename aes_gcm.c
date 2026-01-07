@@ -1,7 +1,12 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "aes_gcm.h"
+
+static const char base64_table[] =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static const uint8_t sbox[256] = {
   0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b,
@@ -206,6 +211,58 @@ static int aes_gcm_process(
 
   return 0;
 }
+static void base64_encode(
+  const uint8_t *data, size_t input_len, char *output
+) {
+  uint32_t a, b, c, triple;
+  size_t i, j;
+  for (i = 0, j = 0; i < input_len; ) {
+    a = i < input_len ? data[i++] : 0;
+    b = i < input_len ? data[i++] : 0;
+    c = i < input_len ? data[i++] : 0;
+    triple = (a << 16) | (b << 8) | c;
+    output[j++] = base64_table[(triple >> 18) & 0x3F];
+    output[j++] = base64_table[(triple >> 12) & 0x3F];
+    output[j++] = (i > input_len + 1) ? '=' : base64_table[(triple >> 6) & 0x3F];
+    output[j++] = (i > input_len) ? '=' : base64_table[triple & 0x3F];
+  }
+  output[j] = '\0';
+}
+static size_t encode_proto_field(
+  uint8_t *buf, uint8_t field_num, const uint8_t *data, size_t len
+) {
+  buf[0] = (field_num << 3) | 2;
+  buf[1] = (uint8_t)len;
+  memcpy(&buf[2], data, len);
+  return len + 2;
+}
+static int base64_decode_char(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+size_t base64_decode(const char *input, uint8_t *output) {
+  size_t input_len = strlen(input);
+  size_t i, out_len = 0;
+  int c, val = 0, valb = -8;
+
+  for (i = 0; i < input_len; i++) {
+    if (isspace(input[i]) || input[i] == '=') continue;
+    c = base64_decode_char(input[i]);
+    if (c == -1) break;
+    val = (val << 6) | c;
+    valb += 6;
+    if (valb >= 0) {
+      output[out_len++] = (uint8_t)((val >> valb) & 0xFF);
+      valb -= 8;
+    }
+  }
+  return out_len;
+}
 /*********************** PUBLIC APIS ***********************************/
 void aes_gcm_init(aes_gcm_context *ctx, const uint8_t *key, int key_bits) {
   int i, nk = key_bits / 32;
@@ -318,4 +375,122 @@ int aes_gcm_string_decrypt(
   free(*output_str);
   *output_str = NULL;
   return -1;
+}
+int aes_gcm_save_to_pem(const aes_gcm_context *ctx, const char *filename) {
+    uint8_t bin_buf[4096];
+    size_t offset = 0, i;
+    FILE *f;
+    char *b64_buf = NULL;
+
+    offset += encode_proto_field(
+      bin_buf + offset, 1, (uint8_t*)ctx->round_keys,
+      sizeof(ctx->round_keys)
+    );
+    offset += encode_proto_field(
+      bin_buf + offset, 2, (uint8_t*)&ctx->rounds, sizeof(int)
+    );
+    offset += encode_proto_field(
+      bin_buf + offset, 3, ctx->H, AES_BLOCK_SIZE
+    );
+    if (ctx->iv && ctx->iv_len > 0) {
+      offset += encode_proto_field(
+        bin_buf + offset, 4, ctx->iv, ctx->iv_len
+      );
+    }
+    if (ctx->aad && ctx->aad_len > 0) {
+      offset += encode_proto_field(
+        bin_buf + offset, 5, ctx->aad, ctx->aad_len
+      );
+    }
+    b64_buf = malloc(offset * 2);
+    if (!b64_buf) return -1;
+    base64_encode(bin_buf, offset, b64_buf);
+
+    f = fopen(filename, "w");
+    if (!f) return -1;
+    fprintf(f, "-----BEGIN AES GCM CONTEXT-----\n");
+    for (i = 0; i < strlen(b64_buf); i++) {
+      fputc(b64_buf[i], f);
+      if ((i + 1) % 64 == 0) fputc('\n', f);
+    }
+    fprintf(f, "\n-----END AES GCM CONTEXT-----\n");
+    fclose(f);
+    return 0;
+}
+int aes_gcm_load_from_pem(aes_gcm_context *ctx, const char *filename) {
+  char line[256];
+  char b64_content[2048] = {0};
+  int inside_block = 0;
+  uint8_t bin_buf[1024];
+  size_t bin_len, offset;
+
+  FILE *f = fopen(filename, "r");
+  if (!f) return -1;
+
+  while (fgets(line, sizeof(line), f)) {
+    if (strstr(line, "-----BEGIN AES GCM CONTEXT-----")) {
+      inside_block = 1;
+      continue;
+    }
+    if (strstr(line, "-----END AES GCM CONTEXT-----")) {
+      inside_block = 0;
+      break;
+    }
+    if (inside_block) {
+      line[strcspn(line, "\r\n")] = 0;
+      strcat(b64_content, line);
+    }
+  }
+  fclose(f);
+
+  if (strlen(b64_content) == 0) return -2;
+  ctx->iv = NULL;
+  ctx->aad = NULL;
+
+  bin_len = base64_decode(b64_content, bin_buf);
+  offset = 0;
+  while (offset < bin_len) {
+    uint8_t tag = bin_buf[offset++];
+    uint8_t len = bin_buf[offset++];
+    uint8_t field_num = tag >> 3;
+
+    switch (field_num) {
+      case 1: {
+        if (len == sizeof(ctx->round_keys)) {
+          memcpy(ctx->round_keys, &bin_buf[offset], len);
+        }
+        break;
+      }
+      case 2: {
+        if (len == sizeof(int)) {
+          memcpy(&ctx->rounds, &bin_buf[offset], len);
+        }
+        break;
+      }
+      case 3: {
+        if (len == AES_BLOCK_SIZE) {
+          memcpy(ctx->H, &bin_buf[offset], len);
+        }
+        break;
+      }
+      case 4: {
+        uint8_t *iv_tmp = malloc(len);
+        ctx->iv_len = len;
+        memcpy(iv_tmp, &bin_buf[offset], len);
+        ctx->iv = iv_tmp;
+        break;
+      }
+      case 5: {
+        uint8_t *aad_tmp = malloc(len);
+        ctx->aad_len = len;
+        memcpy(aad_tmp, &bin_buf[offset], len);
+        ctx->aad = aad_tmp;
+        break;
+      }
+      default: break;
+    }
+    offset += len;
+  }
+
+  return 0;
 }
